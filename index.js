@@ -5,6 +5,8 @@ const snmp = require('net-snmp');
 const joi = require('joi');
 const timeout = require('await-timeout');
 const { promisifyAll } = require('bluebird');
+const cors = require('cors');
+
 
 const app = express();
 
@@ -15,9 +17,9 @@ const schema = () => joi.object({
   community: joi.string().required(),
   oid: joi.string().required(),
   interval: joi.number().required(),
-  times: joi.number().min(3),
-  minLimit: joi.number().min(1),
-  maxLimit: joi.number(),
+  times: joi.number().min(1),
+  minLimit: joi.number().min(0),
+  maxLimit: joi.number().min(0),
 });
 
 const validate = (req, res, next) => {
@@ -30,7 +32,21 @@ const validate = (req, res, next) => {
   next();
 };
 
+const whitelist = [
+    'http://localhost:8080',
+];
+const corsOptions = {
+    origin: function(origin, callback){
+        var originIsWhitelisted = whitelist.indexOf(origin) !== -1;
+        callback(null, originIsWhitelisted);
+    },
+    credentials: true
+};
+app.use(cors(corsOptions));
+
 app.use('/', validate, async (req, res) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
   const {
     host, community, oid, interval, times = 5, minLimit, maxLimit,
   } = req.body;

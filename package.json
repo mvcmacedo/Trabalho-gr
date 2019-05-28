@@ -13,8 +13,9 @@
   "dependencies": {
     "await-timeout": "^0.5.0",
     "bluebird": "^3.5.5",
+    "cors": "^2.8.5",
     "dotenv": "^8.0.0",
-    "express": "^4.17.0",
+    "express": "^4.17.1",
     "joi": "^14.3.1",
     "net-snmp": "^1.2.4"
   },
