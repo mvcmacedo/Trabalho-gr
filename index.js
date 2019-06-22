@@ -7,7 +7,6 @@ const timeout = require('await-timeout');
 const { promisifyAll } = require('bluebird');
 const cors = require('cors');
 
-
 const app = express();
 
 app.use(express.json());
@@ -20,6 +19,8 @@ const schema = () => joi.object({
   times: joi.number().min(1),
   minLimit: joi.number().min(0),
   maxLimit: joi.number().min(0),
+  instance: joi.number().min(0),
+  port: joi.number(),
 });
 
 const validate = (req, res, next) => {
@@ -32,41 +33,48 @@ const validate = (req, res, next) => {
   next();
 };
 
-const whitelist = [
-    'http://localhost:8080',
-];
-const corsOptions = {
-    origin: function(origin, callback){
-        var originIsWhitelisted = whitelist.indexOf(origin) !== -1;
-        callback(null, originIsWhitelisted);
-    },
-    credentials: true
-};
-app.use(cors(corsOptions));
+app.use(cors());
 
 app.use('/', validate, async (req, res) => {
-  res.header("Access-Control-Allow-Origin", "*");
-  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
   const {
-    host, community, oid, interval, times = 5, minLimit, maxLimit,
+    host,
+    community,
+    oid,
+    interval,
+    times,
+    minLimit,
+    maxLimit,
+    instance = 0,
+    port,
   } = req.body;
 
-  const session = promisifyAll(snmp.createSession(host, community));
-  const datas = [];
+  const options = {
+    port,
+  };
 
-  /* eslint-disable no-plusplus */
-  /* eslint-disable no-await-in-loop */
-  for (let i = 0; i < times; i++) {
-    await session
-      .getAsync([oid])
-      .then(async ([response]) => {
-        datas.push(response);
-        await timeout.set(interval);
-      })
-      .catch(err => res.status(404).send(err));
-  }
+  const session = promisifyAll(snmp.createSession(host, community, options));
+  const formattedOid = `${oid}.${instance}`;
 
-  const response = datas.map((data, index) => {
+  /* eslint-disable no-shadow */
+  const consult = async (turns, oid, session) => {
+    /* eslint-disable no-plusplus */
+    /* eslint-disable no-await-in-loop */
+    const datas = [];
+
+    for (let i = 0; i < turns; i++) {
+      await session
+        .getAsync([oid])
+        .then(async ([response]) => {
+          datas.push(response);
+          await timeout.set(interval);
+        })
+        .catch(err => res.status(404).send(err));
+    }
+
+    return datas;
+  };
+
+  const formatResponse = datas => datas.map((data, index) => {
     const formatValue = index > 0 ? data.value - datas[index - 1].value : 0;
     const alert = index > 0 ? formatValue > maxLimit || formatValue < minLimit : false;
 
@@ -78,8 +86,32 @@ app.use('/', validate, async (req, res) => {
     };
   });
 
+  let datas;
+
+  if (oid === 'LINK') {
+    const ifIn = await consult(times, `1.3.6.1.2.1.2.2.1.10.${instance}`, session);
+    const formatIfIn = formatResponse(ifIn);
+
+    const ifOut = await consult(times, `1.3.6.1.2.1.2.2.1.16.${instance}`, session);
+    const formatIfOut = formatResponse(ifOut);
+
+    const ifSpeed = await session.getAsync([`1.3.6.1.2.1.2.2.1.16.${instance}`]);
+    const link = [];
+
+    /* eslint-disable no-plusplus */
+    for (let i = 0; i < times; i++) {
+      const toPush = ((formatIfIn[i].formatValue + formatIfOut[i].formatValue) * 8) / ifSpeed[0].value;
+
+      link.push({ formatValue: toPush, time: `${i * (interval / 1000)}s` });
+    }
+
+    datas = link;
+  } else {
+    datas = await consult(times, formattedOid, session);
+  }
+
   session.close();
-  res.send(response);
+  res.send(datas);
 });
 
 const PORT = process.env.PORT || 3000;
